@@ -55,9 +55,14 @@ for _module_path in OBSTACLE_SDF_MODULES:
     _sdf_fn = getattr(_data_module, "compute_local_sdf_with_grad")
 
     # Register with wp.func - adds overloads on subsequent iterations
-    is_obs_enabled = wp.func(_obs_fn, module=__name__)
-    load_obstacle_transform = wp.func(_transform_fn, module=__name__)
-    compute_local_sdf_with_grad = wp.func(_sdf_fn, module=__name__)
+    try:
+        is_obs_enabled = wp.func(_obs_fn, module=__name__)
+        load_obstacle_transform = wp.func(_transform_fn, module=__name__)
+        compute_local_sdf_with_grad = wp.func(_sdf_fn, module=__name__)
+    except TypeError:
+        is_obs_enabled = wp.func(_obs_fn)
+        load_obstacle_transform = wp.func(_transform_fn)
+        compute_local_sdf_with_grad = wp.func(_sdf_fn)
 
 del _module_path, _data_module, _obs_fn, _transform_fn, _sdf_fn
 
