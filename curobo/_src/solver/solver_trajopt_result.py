@@ -196,6 +196,13 @@ class TrajOptSolverResult(BaseSolverResult):
 
         # Success = Feasible AND Converged
 
+        if self.interpolated_metrics is not None:
+            interpolated_feasible = self.interpolated_metrics.costs_and_constraints.get_feasible(
+                include_all_hybrid=False, sum_horizon=True
+            )
+            feasible = torch.logical_and(feasible, interpolated_feasible)
+
+        self.feasible = feasible.view(self.batch_size, self.num_seeds)
         success = torch.logical_and(converged, feasible)
 
         # check dt success:
@@ -203,12 +210,6 @@ class TrajOptSolverResult(BaseSolverResult):
         # print(dt_success)
         # print(self.js_solution.dt)
         # success = torch.logical_and(dt_success, success)
-        if self.interpolated_metrics is not None:
-            interpolated_feasible = self.interpolated_metrics.costs_and_constraints.get_feasible(
-                include_all_hybrid=False, sum_horizon=True
-            )
-            success = torch.logical_and(interpolated_feasible, success)
-
         goalset_index = torch.cat(goalset_index_list, dim=-1) if goalset_index_list else None
 
         # compute position and rotation errors
@@ -361,6 +362,8 @@ class TrajOptSolverResult(BaseSolverResult):
         new_result.rotation_error = torch.gather(self.rotation_error, dim=1, index=topk_seeds)
         new_result.seed_cost = torch.gather(self.seed_cost, dim=1, index=topk_seeds)
         new_result.seed_rank = torch.gather(self.seed_rank, dim=1, index=topk_seeds)
+        if self.feasible is not None:
+            new_result.feasible = torch.gather(self.feasible, dim=1, index=topk_seeds)
 
         num_links = self.goalset_index.shape[-1]
         # make sure topk_seeds has shape (batch_size, topk, num_links) by broadcasting:
@@ -384,6 +387,35 @@ class TrajOptSolverResult(BaseSolverResult):
         offset = torch.arange(batch_size, device=topk_seeds.device) * self.num_seeds
         offset = offset.view(-1, 1)
         flat_indices = (topk_seeds + offset).view(-1)
+
+        selected_constraint_metrics = {}
+        for metrics_name, metrics in (
+            ("metrics", self.metrics),
+            ("interpolated_metrics", self.interpolated_metrics),
+        ):
+            collection = (
+                None
+                if metrics is None or metrics.costs_and_constraints is None
+                else metrics.costs_and_constraints
+            )
+            if collection is None:
+                continue
+            for collection_name, values in (
+                ("constraint", collection.constraints),
+                ("hybrid_constraint", collection.hybrid_costs_constraints),
+            ):
+                for name, value in zip(values.names, values.values, strict=True):
+                    if value is None:
+                        continue
+                    selected = value.reshape(
+                        batch_size * self.num_seeds, *value.shape[1:]
+                    )[flat_indices]
+                    selected_constraint_metrics[
+                        f"{metrics_name}.{collection_name}.{name}"
+                    ] = selected.max().detach().clone()
+        if new_result.debug_info is None:
+            new_result.debug_info = {}
+        new_result.debug_info["selected_constraint_metrics"] = selected_constraint_metrics
 
         # Select using flat indices
         selected_flat = solution_flat[flat_indices]
@@ -457,4 +489,3 @@ class TrajOptSolverResult(BaseSolverResult):
             self.interpolated_metrics.copy_only_index(other.interpolated_metrics, flat_indices)
 
         super().copy_successful_solutions(other)
-

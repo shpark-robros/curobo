@@ -409,7 +409,7 @@ class MotionPlanner:
             interpolate_waypoints=True,
             interpolation_steps=self.trajopt_solver.action_horizon,
             interpolation_type=TrajInterpolationType.LINEAR,
-            validate_interpolated_trajectory=False,
+            validate_interpolated_trajectory=True,
         )
         if torch.count_nonzero(result.success) == 0:
             return None
