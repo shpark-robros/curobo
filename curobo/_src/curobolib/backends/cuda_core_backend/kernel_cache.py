@@ -10,6 +10,7 @@ at runtime, following the pattern from cuda-python examples.
 
 # Standard Library
 import hashlib
+import importlib
 import os
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -21,13 +22,39 @@ from curobo._src.runtime import debug_cuda_compile as cuda_debug_compile
 from curobo._src.util.logging import log_and_raise, log_debug, log_info, log_warn
 
 
+def _find_nvidia_header_directory(libname: str) -> Optional[str]:
+    """Find CUDA headers, including packages loaded from Isaac Sim's pip prebundle."""
+    cuda_include = pathfinder.find_nvidia_header_directory(libname)
+    if cuda_include is not None and os.path.isdir(cuda_include):
+        return cuda_include
+
+    package_info = {
+        "cudart": ("nvidia.cuda_runtime", "cuda_runtime.h"),
+        "nvrtc": ("nvidia.cuda_nvrtc", "nvrtc.h"),
+    }.get(libname)
+    if package_info is None:
+        return None
+
+    package_name, expected_header = package_info
+    try:
+        package = importlib.import_module(package_name)
+    except ImportError:
+        return None
+
+    for package_path in package.__path__:
+        include_path = Path(package_path) / "include"
+        if (include_path / expected_header).is_file():
+            return str(include_path)
+    return None
+
+
 def get_cuda_home() -> Optional[str]:
     """Get CUDA installation directory from environment variables.
 
     Returns:
         Path to CUDA installation or None if not found
     """
-    cuda_home = pathfinder.find_nvidia_header_directory("nvrtc")
+    cuda_home = _find_nvidia_header_directory("nvrtc")
     return cuda_home
 
 
@@ -192,8 +219,8 @@ class CudaCoreKernelCache:
         # Add CUDA system includes. If kernels start including CCCL or
         # cooperative_groups headers again, add "cccl" here.
         for libname in ("cudart", "nvrtc"):
-            cuda_include = pathfinder.find_nvidia_header_directory(libname)
-            if cuda_include is not None and os.path.isdir(cuda_include):
+            cuda_include = _find_nvidia_header_directory(libname)
+            if cuda_include is not None:
                 include_paths.append(cuda_include)
 
         if not any(os.path.exists(os.path.join(path, "nvrtc.h")) for path in include_paths):
