@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 # Standard Library
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Type, Union
 
@@ -214,7 +215,7 @@ class MotionPlannerCfg:
             robot=robot_config,
             optimizer_configs=ik_optimizer_configs,
             transition_model=ik_transition_model,
-            metrics_rollout=metrics_rollout,
+            metrics_rollout=deepcopy(metrics_rollout),
             device_cfg=device_cfg,
             position_tolerance=position_tolerance,
             orientation_tolerance=orientation_tolerance,
@@ -235,7 +236,7 @@ class MotionPlannerCfg:
             robot=robot_config,
             optimizer_configs=trajopt_optimizer_configs,
             transition_model=trajopt_transition_model,
-            metrics_rollout=metrics_rollout,
+            metrics_rollout=deepcopy(metrics_rollout),
             device_cfg=device_cfg,
             num_seeds=num_trajopt_seeds,
             interpolation_dt=interpolation_dt,
@@ -257,11 +258,13 @@ class MotionPlannerCfg:
         graph_planner_cfg = PRMGraphPlannerCfg.create(
             robot=robot_config,
             graph_planner_config=graph_planner_config,
-            rollout=graph_planner_rollout,
+            rollout=deepcopy(graph_planner_rollout),
             transition_model=graph_planner_transition_model,
             self_collision_check=self_collision_check,
             device_cfg=device_cfg,
             use_cuda_graph_for_rollout=use_cuda_graph,
+            transition_model_config_instance_type=transition_model_config_instance_type,
+            cost_manager_config_instance_type=cost_manager_config_instance_type,
         )
 
         return MotionPlannerCfg(
