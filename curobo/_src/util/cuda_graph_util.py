@@ -143,10 +143,16 @@ class GraphExecutor:
 
     def _initialize_cuda_graph(self, inputs: Tuple[torch.Tensor, ...]):
         """Record CUDA graph."""
+        capture_name = (
+            self._capture_fn.__name__
+            if hasattr(self._capture_fn, "__name__")
+            else type(self._capture_fn).__name__
+        )
         # Flush any pending graph destructions (e.g. from GC of previous
         # GraphExecutors) so that cuGraphExecDestroy does not collide with
         # the upcoming stream capture.
 
+        print(f"[CUDAGraph] {capture_name} phase=pre_capture_sync", flush=True)
         gc.collect()
         torch.cuda.synchronize(self._device)
 
@@ -165,6 +171,9 @@ class GraphExecutor:
                 graph_output = self._capture_fn(*self._graph_input, **self._capture_fn_kwargs)
 
         torch.cuda.current_stream(self._device).wait_stream(stream)
+        print(f"[CUDAGraph] {capture_name} phase=eager_warmup_sync", flush=True)
+        stream.synchronize()
+        print(f"[CUDAGraph] {capture_name} phase=eager_warmup_complete", flush=True)
 
         # Record graph
         self._graph = torch.cuda.CUDAGraph()
@@ -172,8 +181,29 @@ class GraphExecutor:
             self._graph.enable_debug_mode()
             log_warn("CUDA Graph Debug Mode enabled")
 
-        with torch.cuda.graph(self._graph, pool=mem_pool, stream=stream):
+        # Isaac Sim, PhysX Fabric and the renderer can submit unrelated CUDA
+        # work from their own threads even while simulation stepping is
+        # paused.  PyTorch's default global capture mode treats any such
+        # submission as a capture violation and invalidates cuRobo's graph.
+        # Only work submitted by this planner thread may join the graph. Isaac
+        # and PhysX can keep unrelated CUDA work alive on other threads even
+        # while simulation stepping is paused, so global capture is unsuitable.
+        capture_error_mode = "thread_local"
+        print(
+            f"[CUDAGraph] {capture_name} phase=capture_begin "
+            f"error_mode={capture_error_mode}",
+            flush=True,
+        )
+        with torch.cuda.graph(
+            self._graph,
+            pool=mem_pool,
+            stream=stream,
+            capture_error_mode=capture_error_mode,
+        ):
             self._graph_output = self._capture_fn(*self._graph_input, **self._capture_fn_kwargs)
+        print(f"[CUDAGraph] {capture_name} phase=capture_sync", flush=True)
+        stream.synchronize()
+        print(f"[CUDAGraph] {capture_name} phase=capture_complete", flush=True)
 
         # Normalize to tuple
         if not isinstance(self._graph_output, tuple):
